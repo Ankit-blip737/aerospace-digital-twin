@@ -270,11 +270,8 @@ async def predict(payload: TelemetryPayload):
 
         arr_scaled = np.clip(scaler.transform(arr), -5.0, 5.0).astype(np.float32)
 
-        explainability = []
-
         if model_pytorch is not None:
             import torch
-            # First pass: get probabilities (no grad for speed)
             with torch.no_grad():
                 inp   = torch.from_numpy(arr_scaled).unsqueeze(0)
                 probs = torch.softmax(model_pytorch(inp), dim=1)[0].cpu().numpy()
@@ -282,12 +279,6 @@ async def predict(payload: TelemetryPayload):
             raw_class  = int(np.argmax(probs))
             confidence = float(np.max(probs) * 100)
 
-            # Second pass: saliency
-            # Use force_class if provided (fault injection) so we get real gradient
-            # explanations for that fault class on the actual live sensor data.
-            saliency_class = payload.force_class if (payload.force_class is not None and payload.force_class != 0) else raw_class
-            if saliency_class != 0:
-                explainability = compute_saliency(model_pytorch, arr_scaled, saliency_class)
         else:
             flat  = sk_seq_to_flat(arr_scaled)
             probs = model_sklearn.predict_proba(flat)[0]
@@ -315,7 +306,6 @@ async def predict(payload: TelemetryPayload):
             "health_index":    health,
             "class_probs":     all_probs,
             "backend":         BACKEND,
-            "explainability":  explainability,
         }
     except Exception as e:
         import traceback
