@@ -10,6 +10,7 @@ otherwise falls back to sklearn ensemble (uav_model_sklearn.pkl).
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
 import numpy as np
 import pickle, os, collections
 from scipy import stats
@@ -240,7 +241,7 @@ def sk_seq_to_flat(seq: np.ndarray) -> np.ndarray:
 # ── Schemas ─────────────────────────────────────────────────────────────────
 class TelemetryPayload(BaseModel):
     sequence:    list[list[float]]
-    force_class: int | None = None   # if set, compute saliency for this class on real data
+    force_class: Optional[int] = None   # if set, compute saliency for this class on real data
 
 class RULPayload(BaseModel):
     health_history: list[float]
