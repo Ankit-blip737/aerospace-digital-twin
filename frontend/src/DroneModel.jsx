@@ -88,8 +88,9 @@ const CurvedRectangularDrone = ({ id, index, isSelected, dronePayload }) => {
       const targetX = dronePayload?.metrics?.localPos?.x || 0;
       const targetZ = dronePayload?.metrics?.localPos?.z || 0;
       
-      droneRef.current.position.x = THREE.MathUtils.lerp(droneRef.current.position.x, targetX, 0.1);
-      droneRef.current.position.z = THREE.MathUtils.lerp(droneRef.current.position.z, targetZ, 0.1);
+      // Changed lerp from 0.1 to 0.03 to drastically smooth out network bursts/latency from the cloud server
+      droneRef.current.position.x = THREE.MathUtils.lerp(droneRef.current.position.x, targetX, 0.03);
+      droneRef.current.position.z = THREE.MathUtils.lerp(droneRef.current.position.z, targetZ, 0.03);
       
       // Face forward along the orbit tangent (handled by server yaw now, but we keep this if needed, 
       // actually server yaw already includes orbit tangent, so base yaw can be 0)
@@ -108,9 +109,10 @@ const CurvedRectangularDrone = ({ id, index, isSelected, dronePayload }) => {
     const isVibe = currentStatus === 'vibration_fault';
     const jitter = isVibe ? (Math.random() - 0.5) * 0.04 : 0;
 
-    droneRef.current.rotation.x = THREE.MathUtils.lerp(droneRef.current.rotation.x, targetPitch + jitter, 0.2);
-    droneRef.current.rotation.z = THREE.MathUtils.lerp(droneRef.current.rotation.z, -targetRoll + jitter, 0.2);
-    droneRef.current.rotation.y = THREE.MathUtils.lerp(droneRef.current.rotation.y, targetYaw, 0.2);
+    // Changed rotation lerp from 0.2 to 0.05 for buttery smooth turning
+    droneRef.current.rotation.x = THREE.MathUtils.lerp(droneRef.current.rotation.x, targetPitch + jitter, 0.05);
+    droneRef.current.rotation.z = THREE.MathUtils.lerp(droneRef.current.rotation.z, -targetRoll + jitter, 0.05);
+    droneRef.current.rotation.y = THREE.MathUtils.lerp(droneRef.current.rotation.y, targetYaw, 0.05);
 
     // Motor spin — slow down for battery fault, stop for landed
     const prop = propulsion.current;
