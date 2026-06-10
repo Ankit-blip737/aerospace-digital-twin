@@ -117,6 +117,7 @@ SWARM_NODES.forEach(node => {
         historyBuffer:   [],        // 40-frame window for ML
         healthHistory:   [],        // rolling health for RUL
         injectedFault:   null,      // manually injected fault class
+        lastMlPrediction:null,      // cache last ML output for 1Hz throttle
         mode:            'patrol',  // patrol | rtl | landed
         rtlProgress:     0,
     };
@@ -413,8 +414,12 @@ io.on('connection', (socket) => {
                 state.historyBuffer.push(telem.mlFeatures);
                 if (state.historyBuffer.length > SEQUENCE_LENGTH) state.historyBuffer.shift();
 
-                // ML Prediction
-                let mlPrediction = await getPrediction(node.id);
+                // ML Prediction (Throttle to 1Hz to save massive API bandwidth)
+                // Sending 28KB * 4Hz * 5 drones = 2 GB/hour. 1Hz reduces this to 500 MB/hour.
+                if (state.cursor % 4 === 0 || !state.lastMlPrediction) {
+                    state.lastMlPrediction = await getPrediction(node.id);
+                }
+                let mlPrediction = state.lastMlPrediction;
 
                 // Inject fault override if commanded
                 if (state.injectedFault !== null && mlPrediction) {
