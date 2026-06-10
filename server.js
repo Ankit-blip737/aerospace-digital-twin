@@ -417,18 +417,51 @@ io.on('connection', (socket) => {
                 // Inject fault override if commanded
                 if (state.injectedFault !== null && mlPrediction) {
                     const faultInfo = FAULT_CLASSES[state.injectedFault];
+                    // Fake but realistic explainability for each fault type
+                    const INJECTED_XAI = {
+                        1: [ // vibration_fault
+                            { feature: 'VibeX',  group: 'Vibration',    impact_pct: 38.4 },
+                            { feature: 'VibeZ',  group: 'Vibration',    impact_pct: 27.1 },
+                            { feature: 'GyrY',   group: 'IMU',          impact_pct: 14.8 },
+                            { feature: 'AccZ',   group: 'IMU',          impact_pct: 10.2 },
+                            { feature: 'ErrRP',  group: 'Attitude',     impact_pct:  9.5 },
+                        ],
+                        2: [ // sensor_drift
+                            { feature: 'ErrYaw', group: 'Attitude',     impact_pct: 31.7 },
+                            { feature: 'MagX',   group: 'Magnetometer', impact_pct: 24.3 },
+                            { feature: 'GyrZ',   group: 'IMU',          impact_pct: 19.6 },
+                            { feature: 'ErrRP',  group: 'Attitude',     impact_pct: 13.1 },
+                            { feature: 'AccY',   group: 'IMU',          impact_pct: 11.3 },
+                        ],
+                        3: [ // gps_fault
+                            { feature: 'HDop',   group: 'GPS',          impact_pct: 44.2 },
+                            { feature: 'NSats',  group: 'GPS',          impact_pct: 29.8 },
+                            { feature: 'VD_ekf', group: 'EKF',          impact_pct: 13.5 },
+                            { feature: 'PN',     group: 'EKF',          impact_pct:  7.9 },
+                            { feature: 'Spd',    group: 'GPS',          impact_pct:  4.6 },
+                        ],
+                        4: [ // battery_fault
+                            { feature: 'Volt',   group: 'Battery',      impact_pct: 41.6 },
+                            { feature: 'Curr',   group: 'Battery',      impact_pct: 28.3 },
+                            { feature: 'RemPct', group: 'Battery',      impact_pct: 17.4 },
+                            { feature: 'Temp',   group: 'Battery',      impact_pct:  8.1 },
+                            { feature: 'ThO',    group: 'Propulsion',   impact_pct:  4.6 },
+                        ],
+                    };
+
                     mlPrediction = {
                         ...mlPrediction,
-                        fault_class:  state.injectedFault,
-                        status:       faultInfo.name,
-                        status_label: faultInfo.label,
-                        status_color: faultInfo.color,
-                        health_index: state.injectedFault === 0 ? 98.5
+                        fault_class:    state.injectedFault,
+                        status:         faultInfo.name,
+                        status_label:   faultInfo.label,
+                        status_color:   faultInfo.color,
+                        health_index:   state.injectedFault === 0 ? 98.5
                             : state.injectedFault === 1 ? 72
                             : state.injectedFault === 2 ? 61
                             : state.injectedFault === 3 ? 54
                             : 18,
-                        confidence:   '99.00%',
+                        confidence:     '99.00%',
+                        explainability: INJECTED_XAI[state.injectedFault] || [],
                     };
                 }
 
