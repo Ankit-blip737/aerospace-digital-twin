@@ -134,15 +134,17 @@ const FAULT_CLASSES = {
 // ─────────────────────────────────────────────────────────
 //  4. ML PREDICTION
 // ─────────────────────────────────────────────────────────
-async function getPrediction(droneId) {
+async function getPrediction(droneId, forceClass = null) {
     const state = droneState[droneId];
     if (state.historyBuffer.length < SEQUENCE_LENGTH) return null;
     try {
         const ML_API = process.env.ML_API_URL || 'http://127.0.0.1:8000';
-        const res = await axios.post(`${ML_API}/predict`, { sequence: state.historyBuffer }, { timeout: 2000 });
+        const body   = { sequence: state.historyBuffer };
+        if (forceClass !== null) body.force_class = forceClass; // tell ML API to compute saliency for this class
+        const res = await axios.post(`${ML_API}/predict`, body, { timeout: 3000 });
         return res.data;
     } catch {
-        return { status: 'nominal', fault_class: 0, health_index: 98.5, confidence: '0%', status_color: '#10b981', status_label: 'NOMINAL' };
+        return { status: 'nominal', fault_class: 0, health_index: 98.5, confidence: '0%', status_color: '#10b981', status_label: 'NOMINAL', explainability: [] };
     }
 }
 
@@ -411,46 +413,15 @@ io.on('connection', (socket) => {
                 state.historyBuffer.push(telem.mlFeatures);
                 if (state.historyBuffer.length > SEQUENCE_LENGTH) state.historyBuffer.shift();
 
-                // ML Prediction
-                let mlPrediction = await getPrediction(node.id);
+                // ML Prediction — pass injectedFault so ML API computes real saliency for that class
+                let mlPrediction = await getPrediction(node.id, state.injectedFault);
 
                 // Inject fault override if commanded
+                // Note: explainability comes directly from the ML API (real PyTorch gradients)
                 if (state.injectedFault !== null && mlPrediction) {
                     const faultInfo = FAULT_CLASSES[state.injectedFault];
-                    // Fake but realistic explainability for each fault type
-                    const INJECTED_XAI = {
-                        1: [ // vibration_fault
-                            { feature: 'VibeX',  group: 'Vibration',    impact_pct: 38.4 },
-                            { feature: 'VibeZ',  group: 'Vibration',    impact_pct: 27.1 },
-                            { feature: 'GyrY',   group: 'IMU',          impact_pct: 14.8 },
-                            { feature: 'AccZ',   group: 'IMU',          impact_pct: 10.2 },
-                            { feature: 'ErrRP',  group: 'Attitude',     impact_pct:  9.5 },
-                        ],
-                        2: [ // sensor_drift
-                            { feature: 'ErrYaw', group: 'Attitude',     impact_pct: 31.7 },
-                            { feature: 'MagX',   group: 'Magnetometer', impact_pct: 24.3 },
-                            { feature: 'GyrZ',   group: 'IMU',          impact_pct: 19.6 },
-                            { feature: 'ErrRP',  group: 'Attitude',     impact_pct: 13.1 },
-                            { feature: 'AccY',   group: 'IMU',          impact_pct: 11.3 },
-                        ],
-                        3: [ // gps_fault
-                            { feature: 'HDop',   group: 'GPS',          impact_pct: 44.2 },
-                            { feature: 'NSats',  group: 'GPS',          impact_pct: 29.8 },
-                            { feature: 'VD_ekf', group: 'EKF',          impact_pct: 13.5 },
-                            { feature: 'PN',     group: 'EKF',          impact_pct:  7.9 },
-                            { feature: 'Spd',    group: 'GPS',          impact_pct:  4.6 },
-                        ],
-                        4: [ // battery_fault
-                            { feature: 'Volt',   group: 'Battery',      impact_pct: 41.6 },
-                            { feature: 'Curr',   group: 'Battery',      impact_pct: 28.3 },
-                            { feature: 'RemPct', group: 'Battery',      impact_pct: 17.4 },
-                            { feature: 'Temp',   group: 'Battery',      impact_pct:  8.1 },
-                            { feature: 'ThO',    group: 'Propulsion',   impact_pct:  4.6 },
-                        ],
-                    };
-
                     mlPrediction = {
-                        ...mlPrediction,
+                        ...mlPrediction,               // preserves real explainability from ML API
                         fault_class:    state.injectedFault,
                         status:         faultInfo.name,
                         status_label:   faultInfo.label,
@@ -461,7 +432,6 @@ io.on('connection', (socket) => {
                             : state.injectedFault === 3 ? 54
                             : 18,
                         confidence:     '99.00%',
-                        explainability: INJECTED_XAI[state.injectedFault] || [],
                     };
                 }
 

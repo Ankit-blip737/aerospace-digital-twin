@@ -239,7 +239,8 @@ def sk_seq_to_flat(seq: np.ndarray) -> np.ndarray:
 
 # ── Schemas ─────────────────────────────────────────────────────────────────
 class TelemetryPayload(BaseModel):
-    sequence: list[list[float]]
+    sequence:    list[list[float]]
+    force_class: int | None = None   # if set, compute saliency for this class on real data
 
 class RULPayload(BaseModel):
     health_history: list[float]
@@ -280,9 +281,12 @@ async def predict(payload: TelemetryPayload):
             raw_class  = int(np.argmax(probs))
             confidence = float(np.max(probs) * 100)
 
-            # Second pass: saliency (only when fault detected, to save CPU)
-            if raw_class != 0:
-                explainability = compute_saliency(model_pytorch, arr_scaled, raw_class)
+            # Second pass: saliency
+            # Use force_class if provided (fault injection) so we get real gradient
+            # explanations for that fault class on the actual live sensor data.
+            saliency_class = payload.force_class if (payload.force_class is not None and payload.force_class != 0) else raw_class
+            if saliency_class != 0:
+                explainability = compute_saliency(model_pytorch, arr_scaled, saliency_class)
         else:
             flat  = sk_seq_to_flat(arr_scaled)
             probs = model_sklearn.predict_proba(flat)[0]
