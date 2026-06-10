@@ -241,8 +241,8 @@ const CameraController = ({ selectedDrone, allDroneData }) => {
 const CityEnvironment = () => {
   const buildings = React.useMemo(() => {
     const items = [];
-    // Generating 400 buildings as requested
-    for (let i = 0; i < 400; i++) {
+    // Reduced to 150 to drastically improve Framerate (FPS) and smooth out drone movement
+    for (let i = 0; i < 150; i++) {
       // Scatter over 800x800 area
       const x = (Math.random() - 0.5) * 800;
       const z = (Math.random() - 0.5) * 800;
@@ -260,7 +260,8 @@ const CityEnvironment = () => {
   return (
     <group>
       {buildings.map((props, i) => (
-        <mesh key={i} position={props.position} scale={props.scale} castShadow receiveShadow>
+        // Disabled castShadow and receiveShadow for massive GPU performance gain
+        <mesh key={i} position={props.position} scale={props.scale}>
           <boxGeometry />
           <meshStandardMaterial color="#0f172a" roughness={0.9} metalness={0.1} />
         </mesh>
