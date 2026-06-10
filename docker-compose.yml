@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:latest
+    container_name: uav-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: always
+
+  ml-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    container_name: uav-ml-api
+    ports:
+      - "8000:8000"
+    restart: always
+
+  node-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: uav-node-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/drones
+      - ML_API_URL=http://ml-api:8000
+    depends_on:
+      - mongo
+      - ml-api
+    restart: always
+
+  react-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        # Note: In a real cloud deployment, this must be the public IP/Domain of your Node Backend
+        - VITE_BACKEND_URL=http://localhost:5000
+    container_name: uav-react-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - node-backend
+    restart: always
+
+volumes:
+  mongo_data:
