@@ -37,6 +37,41 @@ function RULBar({ rul, health, status }) {
   );
 }
 
+/* ── Explainability: AI Root Cause Analysis ─────────────────────── */
+function ExplainabilityBox({ items, statusColor }) {
+  if (!items || items.length === 0) return null;
+
+  return (
+    <div className="xai-box">
+      <div className="xai-header">
+        <span className="xai-icon">🧠</span>
+        <span className="xai-title">AI ROOT CAUSE ANALYSIS</span>
+      </div>
+      <div className="xai-bars">
+        {items.slice(0, 3).map((item, i) => (
+          <div key={i} className="xai-row">
+            <div className="xai-label">
+              <span className="xai-feature">{item.feature}</span>
+              <span className="xai-group">{item.group}</span>
+            </div>
+            <div className="xai-bar-track">
+              <div
+                className="xai-bar-fill"
+                style={{
+                  width: `${Math.min(100, item.impact_pct * 2)}%`,
+                  background: `linear-gradient(90deg, ${statusColor}cc, ${statusColor}40)`,
+                  animationDelay: `${i * 0.15}s`,
+                }}
+              />
+            </div>
+            <span className="xai-pct" style={{ color: statusColor }}>{item.impact_pct}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function RULPanel({ droneData }) {
   const drones = Object.entries(droneData || {});
 
@@ -58,6 +93,8 @@ export default function RULPanel({ droneData }) {
 
           const rulMin = rul?.rul_minutes;
           const trend  = rul?.trend || 'stable';
+
+          const explainability = ml?.explainability || [];
 
           return (
             <div key={droneId} className="rul-row">
@@ -98,6 +135,9 @@ export default function RULPanel({ droneData }) {
                 )}
                 <span className="rul-detail">Conf: <strong>{ml?.confidence || '–'}</strong></span>
               </div>
+
+              {/* AI Explainability - only shows when fault is detected */}
+              <ExplainabilityBox items={explainability} statusColor={statusColor} />
             </div>
           );
         })}

@@ -143,10 +143,79 @@ FAULT_CLASSES = {
     4: {"name": "battery_fault",   "label": "BATTERY FAULT",     "color": "#ef4444"},
 }
 
+# ── 59 Feature Names (exact order used during training) ─────────────────────
+FEATURE_NAMES = [
+    'DesRoll', 'Roll', 'DesPitch', 'Pitch', 'DesYaw', 'Yaw', 'ErrRP', 'ErrYaw',
+    'Volt', 'VoltR', 'Curr', 'CurrTot', 'Temp', 'Res', 'RemPct',
+    'Alt', 'Press', 'CRt',
+    'NSats', 'HDop', 'Spd',
+    'GyrX', 'GyrY', 'GyrZ', 'AccX', 'AccY', 'AccZ', 'IMU_Temp',
+    'MagX', 'MagY', 'MagZ', 'Mag_Health',
+    'LiftMax', 'MotBatVolt', 'MotBatRes', 'ThLimit',
+    'TPD', 'PD', 'DVD', 'VD',
+    'RDes', 'R_Rate', 'PDes', 'P_Rate', 'YDes', 'Y_Rate', 'ADes', 'A_Rate',
+    'VibeX', 'VibeY', 'VibeZ', 'Clip',
+    'VN', 'VE', 'VD_ekf', 'PN', 'PE', 'OH',
+    'ThO',
+]
+
+# ── Sensor group mapping for human-readable explainability ──────────────────
+FEATURE_GROUPS = {}
+for _fn in FEATURE_NAMES:
+    if _fn in ('DesRoll','Roll','DesPitch','Pitch','DesYaw','Yaw','ErrRP','ErrYaw'):
+        FEATURE_GROUPS[_fn] = 'Attitude'
+    elif _fn in ('Volt','VoltR','Curr','CurrTot','Temp','Res','RemPct'):
+        FEATURE_GROUPS[_fn] = 'Battery'
+    elif _fn in ('Alt','Press','CRt'):
+        FEATURE_GROUPS[_fn] = 'Barometer'
+    elif _fn in ('NSats','HDop','Spd'):
+        FEATURE_GROUPS[_fn] = 'GPS'
+    elif _fn in ('GyrX','GyrY','GyrZ','AccX','AccY','AccZ','IMU_Temp'):
+        FEATURE_GROUPS[_fn] = 'IMU'
+    elif _fn in ('MagX','MagY','MagZ','Mag_Health'):
+        FEATURE_GROUPS[_fn] = 'Magnetometer'
+    elif _fn in ('LiftMax','MotBatVolt','MotBatRes','ThLimit'):
+        FEATURE_GROUPS[_fn] = 'Motor'
+    elif _fn in ('TPD','PD','DVD','VD'):
+        FEATURE_GROUPS[_fn] = 'Position'
+    elif _fn in ('RDes','R_Rate','PDes','P_Rate','YDes','Y_Rate','ADes','A_Rate'):
+        FEATURE_GROUPS[_fn] = 'Rate Control'
+    elif _fn in ('VibeX','VibeY','VibeZ','Clip'):
+        FEATURE_GROUPS[_fn] = 'Vibration'
+    elif _fn in ('VN','VE','VD_ekf','PN','PE','OH'):
+        FEATURE_GROUPS[_fn] = 'EKF'
+    else:
+        FEATURE_GROUPS[_fn] = 'Propulsion'
+
 def health_from_class(cls: int, conf: float) -> float:
     base    = {0: 98.5, 1: 72.0, 2: 62.0, 3: 54.0, 4: 20.0}
     penalty = {0: 0.00, 1: 0.12, 2: 0.15, 3: 0.12, 4: 0.15}
     return round(float(max(0.0, min(100.0, base[cls] - penalty[cls] * conf))), 1)
+
+def compute_saliency(model, arr_scaled, predicted_class):
+    """Compute gradient-based saliency for the predicted class."""
+    try:
+        import torch
+        inp = torch.from_numpy(arr_scaled).unsqueeze(0).requires_grad_(True)
+        logits = model(inp)
+        logits[0, predicted_class].backward()
+        # Average absolute gradient across the time axis → (59,) importance per feature
+        grad = inp.grad.data.abs().squeeze(0).mean(dim=0).numpy()  # (59,)
+        # Normalize to percentages
+        total = grad.sum()
+        if total < 1e-9:
+            return []
+        pcts = (grad / total) * 100
+        # Build sorted list
+        ranked = sorted(
+            [(FEATURE_NAMES[i], FEATURE_GROUPS.get(FEATURE_NAMES[i], ''), round(float(pcts[i]), 1)) for i in range(len(pcts))],
+            key=lambda x: x[2], reverse=True
+        )
+        # Return top 5
+        return [{"feature": r[0], "group": r[1], "impact_pct": r[2]} for r in ranked[:5]]
+    except Exception as e:
+        print(f"[XAI] Saliency error: {e}")
+        return []
 
 def sk_seq_to_flat(seq: np.ndarray) -> np.ndarray:
     """Convert (SEQ_LEN, N_FEATURES) → flat+stats vector for sklearn."""
@@ -188,17 +257,27 @@ async def predict(payload: TelemetryPayload):
 
         arr_scaled = np.clip(scaler.transform(arr), -5.0, 5.0).astype(np.float32)
 
+        explainability = []
+
         if model_pytorch is not None:
             import torch
+            # First pass: get probabilities (no grad for speed)
             with torch.no_grad():
                 inp   = torch.from_numpy(arr_scaled).unsqueeze(0)
                 probs = torch.softmax(model_pytorch(inp), dim=1)[0].cpu().numpy()
+
+            raw_class  = int(np.argmax(probs))
+            confidence = float(np.max(probs) * 100)
+
+            # Second pass: saliency (only when fault detected, to save CPU)
+            if raw_class != 0:
+                explainability = compute_saliency(model_pytorch, arr_scaled, raw_class)
         else:
             flat  = sk_seq_to_flat(arr_scaled)
             probs = model_sklearn.predict_proba(flat)[0]
+            raw_class  = int(np.argmax(probs))
+            confidence = float(np.max(probs) * 100)
 
-        raw_class  = int(np.argmax(probs))
-        confidence = float(np.max(probs) * 100)
         all_probs  = {str(i): round(float(probs[i]) * 100, 2) for i in range(N_CLASSES)}
 
         pred_buffer.append(raw_class)
@@ -220,6 +299,7 @@ async def predict(payload: TelemetryPayload):
             "health_index":    health,
             "class_probs":     all_probs,
             "backend":         BACKEND,
+            "explainability":  explainability,
         }
     except Exception as e:
         import traceback
