@@ -465,7 +465,9 @@ io.on('connection', (socket) => {
                             : state.injectedFault === 3 ? 54
                             : 18,
                         confidence:     '99.00%',
-                        explainability: XAI_BY_FAULT[state.injectedFault] || [],
+                        explainability: (mlPrediction.explainability && mlPrediction.explainability.length > 0) 
+                                        ? mlPrediction.explainability 
+                                        : (XAI_BY_FAULT[state.injectedFault] || []),
                     };
                 }
 

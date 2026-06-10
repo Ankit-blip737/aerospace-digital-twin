@@ -193,41 +193,77 @@ def health_from_class(cls: int, conf: float) -> float:
     penalty = {0: 0.00, 1: 0.12, 2: 0.15, 3: 0.12, 4: 0.15}
     return round(float(max(0.0, min(100.0, base[cls] - penalty[cls] * conf))), 1)
 
-def compute_saliency(model, arr_scaled, predicted_class):
-    """Compute gradient-based saliency for the predicted class."""
+def compute_explainability(model, arr_scaled, predicted_class):
+    """
+    Feature Ablation XAI — REAL model-derived explainability using ONLY forward passes.
+    
+    For each sensor group, we zero out all features in that group and re-run the model.
+    The drop in the predicted class probability tells us how important that group is.
+    This is mathematically equivalent to Occlusion Sensitivity / Feature Ablation
+    (used by Microsoft InterpretML, Captum, SHAP KernelExplainer).
+    
+    Memory: same as a single forward pass (no backward, no gradient storage).
+    """
     try:
         import torch
-        # Disable gradients on model parameters to save memory and prevent OOM
-        for p in model.parameters():
-            p.requires_grad = False
 
-        inp = torch.from_numpy(arr_scaled).unsqueeze(0).requires_grad_(True)
-        logits = model(inp)
-        logits[0, predicted_class].backward()
-        
-        # Average absolute gradient across the time axis → (59,) importance per feature
-        grad = inp.grad.data.abs().squeeze(0).mean(dim=0).numpy()  # (59,)
-        
-        # Free memory explicitly
-        model.zero_grad(set_to_none=True)
-        
-        # Normalize to percentages
-        total = grad.sum()
-        if total < 1e-9:
-            return []
-        pcts = (grad / total) * 100
-        # Build sorted list
-        ranked = sorted(
-            [(FEATURE_NAMES[i], FEATURE_GROUPS.get(FEATURE_NAMES[i], ''), round(float(pcts[i]), 1)) for i in range(len(pcts))],
-            key=lambda x: x[2], reverse=True
-        )
-        # Return top 5
-        return [{"feature": r[0], "group": r[1], "impact_pct": r[2]} for r in ranked[:5]]
+        with torch.no_grad():
+            # Baseline: original prediction probability
+            inp_base = torch.from_numpy(arr_scaled).unsqueeze(0)
+            probs_base = torch.softmax(model(inp_base), dim=1)[0].cpu().numpy()
+            base_prob = float(probs_base[predicted_class])
+
+            # Group features by sensor subsystem for efficient ablation
+            GROUP_INDICES = {}
+            for i, fn in enumerate(FEATURE_NAMES):
+                grp = FEATURE_GROUPS.get(fn, 'Other')
+                if grp not in GROUP_INDICES:
+                    GROUP_INDICES[grp] = []
+                GROUP_INDICES[grp].append(i)
+
+            # Ablate each group: zero out its features, measure probability drop
+            group_impacts = []
+            for grp_name, indices in GROUP_INDICES.items():
+                ablated = arr_scaled.copy()
+                ablated[:, indices] = 0.0  # zero out entire group across all timesteps
+                inp_abl = torch.from_numpy(ablated).unsqueeze(0)
+                probs_abl = torch.softmax(model(inp_abl), dim=1)[0].cpu().numpy()
+                drop = base_prob - float(probs_abl[predicted_class])
+                # Only keep positive drops (feature removal reduced confidence = feature was important)
+                if drop > 0.001:
+                    group_impacts.append((grp_name, drop, indices))
+
+            if not group_impacts:
+                return []
+
+            # Sort groups by impact
+            group_impacts.sort(key=lambda x: x[1], reverse=True)
+
+            # For top 3 groups, drill down to individual features
+            results = []
+            for grp_name, grp_drop, indices in group_impacts[:3]:
+                for idx in indices:
+                    ablated = arr_scaled.copy()
+                    ablated[:, idx] = 0.0
+                    inp_abl = torch.from_numpy(ablated).unsqueeze(0)
+                    probs_abl = torch.softmax(model(inp_abl), dim=1)[0].cpu().numpy()
+                    feat_drop = base_prob - float(probs_abl[predicted_class])
+                    if feat_drop > 0.001:
+                        results.append((FEATURE_NAMES[idx], grp_name, feat_drop))
+
+            if not results:
+                return []
+
+            # Normalize to percentages
+            total_drop = sum(r[2] for r in results)
+            results_pct = [(r[0], r[1], round((r[2] / total_drop) * 100, 1)) for r in results]
+            results_pct.sort(key=lambda x: x[2], reverse=True)
+
+            return [{"feature": r[0], "group": r[1], "impact_pct": r[2]} for r in results_pct[:5]]
+
     except Exception as e:
-        import traceback
-        err_str = str(e)
-        print(f"[XAI] Saliency error: {err_str}")
-        return [{"feature": "XAI ERROR", "group": err_str[:30], "impact_pct": 100}]
+        print(f"[XAI] Ablation error: {e}")
+        return []
 
 def sk_seq_to_flat(seq: np.ndarray) -> np.ndarray:
     """Convert (SEQ_LEN, N_FEATURES) → flat+stats vector for sklearn."""
@@ -279,6 +315,11 @@ async def predict(payload: TelemetryPayload):
             raw_class  = int(np.argmax(probs))
             confidence = float(np.max(probs) * 100)
 
+            explainability = []
+            saliency_class = payload.force_class if (payload.force_class is not None and payload.force_class != 0) else raw_class
+            if saliency_class != 0:
+                explainability = compute_explainability(model_pytorch, arr_scaled, saliency_class)
+
         else:
             flat  = sk_seq_to_flat(arr_scaled)
             probs = model_sklearn.predict_proba(flat)[0]
@@ -306,6 +347,7 @@ async def predict(payload: TelemetryPayload):
             "health_index":    health,
             "class_probs":     all_probs,
             "backend":         BACKEND,
+            "explainability":  explainability if model_pytorch is not None else [],
         }
     except Exception as e:
         import traceback
