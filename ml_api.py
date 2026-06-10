@@ -223,8 +223,10 @@ def compute_saliency(model, arr_scaled, predicted_class):
         # Return top 5
         return [{"feature": r[0], "group": r[1], "impact_pct": r[2]} for r in ranked[:5]]
     except Exception as e:
-        print(f"[XAI] Saliency error: {e}")
-        return []
+        import traceback
+        err_str = str(e)
+        print(f"[XAI] Saliency error: {err_str}")
+        return [{"feature": "XAI ERROR", "group": err_str[:30], "impact_pct": 100}]
 
 def sk_seq_to_flat(seq: np.ndarray) -> np.ndarray:
     """Convert (SEQ_LEN, N_FEATURES) → flat+stats vector for sklearn."""
