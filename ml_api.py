@@ -196,11 +196,20 @@ def compute_saliency(model, arr_scaled, predicted_class):
     """Compute gradient-based saliency for the predicted class."""
     try:
         import torch
+        # Disable gradients on model parameters to save memory and prevent OOM
+        for p in model.parameters():
+            p.requires_grad = False
+
         inp = torch.from_numpy(arr_scaled).unsqueeze(0).requires_grad_(True)
         logits = model(inp)
         logits[0, predicted_class].backward()
+        
         # Average absolute gradient across the time axis → (59,) importance per feature
         grad = inp.grad.data.abs().squeeze(0).mean(dim=0).numpy()  # (59,)
+        
+        # Free memory explicitly
+        model.zero_grad(set_to_none=True)
+        
         # Normalize to percentages
         total = grad.sum()
         if total < 1e-9:
